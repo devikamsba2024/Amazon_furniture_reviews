@@ -22,6 +22,7 @@ import streamlit as st
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_PATH = BASE_DIR / "amazon_reviews_us_Furniture_v1_00_filtered.tsv"
 CLEAN_INSIGHTS_PATH = BASE_DIR / "review_insights_checkpoint_cleaned.json.gz"
+CLUSTER_INSIGHTS_PATH = BASE_DIR / "review_clusters_full.json.gz"
 CHARTS_DIR = BASE_DIR / "furniture_insight_charts"
 
 
@@ -74,6 +75,36 @@ def load_clean_insights(path: Path) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_cluster_insights(path: Path) -> pd.DataFrame:
+    """Load clustering results with t-SNE coordinates."""
+    if not _safe_path_readable(path):
+        return pd.DataFrame()
+
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        payload: List[Dict[str, Any]] = json.load(f)
+
+    df = pd.DataFrame(payload)
+    if "star_rating" in df.columns:
+        df["star_rating"] = pd.to_numeric(df["star_rating"], errors="coerce").astype("Int64")
+    list_like_columns = [
+        "pain_points_clean",
+        "positive_aspects_clean",
+        "main_themes_clean",
+        "purchase_factors_clean",
+        "pain_points",
+        "positive_aspects",
+        "main_themes",
+        "purchase_decision_factors",
+    ]
+    for column in list_like_columns:
+        if column in df.columns:
+            df[column] = df[column].apply(
+                lambda value: value if isinstance(value, list) else ([] if pd.isna(value) else [value])
+            )
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Visualization helpers
 # ---------------------------------------------------------------------------
@@ -103,7 +134,7 @@ def compute_term_counts(df: pd.DataFrame, column: str, top_n: int) -> pd.DataFra
     return counts
 
 
-def render_dynamic_terms(title: str, df: pd.DataFrame, column: str, top_n: int) -> None:
+def render_dynamic_terms(title: str | None, df: pd.DataFrame, column: str, top_n: int) -> None:
     counts = compute_term_counts(df, column, top_n)
     if counts.empty:
         st.info("No records match the current filters for this section.")
@@ -114,14 +145,25 @@ def render_dynamic_terms(title: str, df: pd.DataFrame, column: str, top_n: int) 
         x="name",
         y="count",
         text_auto=".0f",
-        title=None,
+        title=title,
     )
     fig.update_traces(marker_color="#2F4F4F", textposition="outside")
-    fig.update_layout(
+    top_margin = 90 if title else 40
+    layout_kwargs = dict(
         xaxis_title="",
         yaxis_title="Mentions",
-        margin=dict(l=20, r=20, t=10, b=60),
+        margin=dict(l=20, r=20, t=top_margin, b=60),
     )
+    if title:
+        layout_kwargs["title"] = dict(
+            text=title,
+            x=0.5,
+            y=0.98,
+            xanchor="center",
+            yanchor="top",
+            font=dict(size=16, weight="bold"),
+        )
+    fig.update_layout(**layout_kwargs)
     st.plotly_chart(fig, width="stretch")
     with st.expander("View table"):
         st.dataframe(counts, hide_index=True, width="stretch")
@@ -157,6 +199,22 @@ def section_header(title: str, subtitle: str | None = None) -> None:
     st.markdown(f"## {title}")
     if subtitle:
         st.caption(subtitle)
+
+
+@st.cache_data(show_spinner=False)
+def load_latest_summary_markdown() -> str:
+    files = sorted(BASE_DIR.glob("executive_summary_*.md"))
+    if not files:
+        return ""
+    return files[-1].read_text(encoding="utf-8")
+
+
+@st.cache_data(show_spinner=False)
+def load_comparison_markdown() -> str:
+    path = BASE_DIR / "top_vs_bottom_comparison.md"
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +309,7 @@ st.set_page_config(
     page_icon="🛋️",
 )
 
+
 st.title("Amazon Furniture Review Insights Dashboard")
 st.markdown(
     """
@@ -274,6 +333,7 @@ keyword_filter = st.sidebar.text_input(
 # Load datasets --------------------------------------------------------------
 reviews_df = load_reviews_dataframe(DATASET_PATH)
 clean_insights_df = load_clean_insights(CLEAN_INSIGHTS_PATH)
+cluster_insights_df = load_cluster_insights(CLUSTER_INSIGHTS_PATH)
 
 if not clean_insights_df.empty:
     if "star_rating" in clean_insights_df.columns:
@@ -410,6 +470,19 @@ filtered_reviews_df = (
     else pd.DataFrame()
 )
 
+filtered_cluster_df = (
+    apply_filters_to_insights(
+        cluster_insights_df,
+        selected_date_range,
+        selected_ratings,
+        verified_choice,
+        vine_choice,
+        keyword_filter,
+    )
+    if not cluster_insights_df.empty
+    else pd.DataFrame()
+)
+
 # KPI section ----------------------------------------------------------------
 section_header("At a Glance")
 col1, col2, col3 = st.columns(3)
@@ -429,14 +502,19 @@ with col3:
         f"{avg_rating:.2f}" if avg_rating else "—",
     )
 
+# Cached narratives -------------------------------------------------------
+summary_markdown = load_latest_summary_markdown()
+comparison_markdown = load_comparison_markdown()
+
 # Story tabs --------------------------------------------------------------
-overview_tab, friction_tab, delight_tab, segments_tab, ops_tab = st.tabs(
+overview_tab, eda_tab, sentiment_tab, clusters_tab, temporal_tab, comparison_tab = st.tabs(
     [
         "Executive Overview",
-        "Reduce Friction",
-        "Delight Customers",
-        "Segments & Stories",
-        "Operations & Follow-up",
+        "Exploratory Analysis",
+        "Pain & Positives by Rating",
+        "K-Means Clusters",
+        "Temporal Trends",
+        "Comparative Analysis",
     ]
 )
 
@@ -444,16 +522,204 @@ with overview_tab:
     section_header("Executive Overview", "Spot macro trends for the current filter slice.")
     st.markdown(
         "Use the filters on the left to change who we are listening to. "
-        "The charts below refresh instantly so you can see whether a segment is growing or cooling."
+        "Scan the live metrics above, then dive into the tabs for deeper explorations."
     )
+    if summary_markdown:
+        with st.expander("Executive Summary", expanded=False):
+            st.markdown(summary_markdown)
+
+with eda_tab:
+    section_header("Exploratory Analysis", "High-level visuals from the notebook plus interactive cuts.")
     if filtered_reviews_df.empty:
-        st.info("Upload the TSV dataset locally to explore temporal trends.")
+        st.info("Load the TSV dataset locally to explore distributions and helpfulness metrics.")
+    else:
+        eda_cols = st.columns(2)
+        rating_counts = (
+            filtered_reviews_df["star_rating"]
+            .value_counts()
+            .sort_index()
+            .rename_axis("star_rating")
+            .reset_index(name="review_count")
+        )
+        with eda_cols[0]:
+            st.subheader("Rating distribution (selection)")
+            if rating_counts.empty:
+                st.info("No ratings available for the current filters.")
+            else:
+                rating_fig = px.bar(
+                    rating_counts,
+                    x="star_rating",
+                    y="review_count",
+                    text_auto=True,
+                    labels={"star_rating": "Star rating", "review_count": "Reviews"},
+                )
+                rating_fig.update_layout(margin=dict(l=20, r=20, t=40, b=40))
+                st.plotly_chart(rating_fig, width="stretch")
+        with eda_cols[1]:
+            st.subheader("Average helpful votes by rating")
+            if "helpful_votes" in filtered_reviews_df.columns:
+                helpful_df = (
+                    filtered_reviews_df.groupby("star_rating", dropna=True)["helpful_votes"]
+                    .mean()
+                    .rename("avg_helpful_votes")
+                    .reset_index()
+                    .sort_values("star_rating")
+                )
+                if helpful_df.empty:
+                    st.info("Helpful vote data not available for this slice.")
+                else:
+                    helpful_fig = px.bar(
+                        helpful_df,
+                        x="star_rating",
+                        y="avg_helpful_votes",
+                        labels={"star_rating": "Star rating", "avg_helpful_votes": "Avg helpful votes"},
+                    )
+                    helpful_fig.update_layout(margin=dict(l=20, r=20, t=40, b=40))
+                    st.plotly_chart(helpful_fig, width="stretch")
+            else:
+                st.info("Helpful vote data not present in the loaded dataset.")
+
+    st.markdown("### Notebook snapshots")
+    story_image(
+        "rating_distribution_for_furniture_reviews.png",
+        "Rating distribution (all reviews)",
+        "Use this baseline when you filter to specific cohorts.",
+    )
+    story_image(
+        "review_volume_over_time.png",
+        "Review volume over time (all reviews)",
+        "Compare with deselected cohorts in the temporal tab.",
+    )
+    story_image(
+        "sentiment_trend_avg.png",
+        "Average sentiment trend (all reviews)",
+        "Control chart for the temporal analysis tab.",
+    )
+
+with sentiment_tab:
+    section_header("Pain & Positives by Rating", "Contrast the strongest detractors and delights per star level.")
+    if filtered_clean_df.empty or "star_rating" not in filtered_clean_df.columns:
+        st.info("Enable the cleaned insight records to explore pain points and positives by rating.")
+    else:
+        rating_values = sorted(filtered_clean_df["star_rating"].dropna().unique())
+        for rating in rating_values:
+            subset = filtered_clean_df[filtered_clean_df["star_rating"] == rating]
+            if subset.empty:
+                continue
+            with st.expander(f"{rating}-Star Reviews ({len(subset):,})", expanded=rating in {1, 5}):
+                render_dynamic_terms("Pain Points", subset, pain_col, top_n)
+                render_dynamic_terms("Positive Aspects", subset, pos_col, top_n)
+                render_dynamic_terms("Themes", subset, theme_col, top_n)
+
+    st.markdown("### Notebook snapshots")
+    story_image(
+        "pain_points.png",
+        "Top-20 pain points (all reviews)",
+        "Cross-check this baseline to see where your selected cohort over-indexes.",
+    )
+    story_image(
+        "positive_aspects.png",
+        "Top positive drivers (all reviews)",
+        "Identify the universal delights before drilling into your filtered cohort.",
+    )
+    story_image(
+        "top20_overview.png",
+        "Positive vs negative share across the first 20 features",
+        "Helpful for spotting balanced value propositions that resonate across the journey.",
+    )
+    story_image(
+        "purchase_decision_factors.png",
+        "Purchase decision factors",
+        "Great companion for messaging and go-to-market planning.",
+    )
+
+with clusters_tab:
+    section_header("K-Means Clusters", "Explore persona clusters with interactive t-SNE.")
+    if filtered_cluster_df.empty or {"tsne_x", "tsne_y", "cluster_id"}.difference(filtered_cluster_df.columns):
+        st.info(
+            "Cluster insights not available for the current configuration. "
+            "Ensure `review_clusters_full.json.gz` is present and the filters are not too restrictive."
+        )
+    else:
+        cluster_options = sorted(filtered_cluster_df["cluster_id"].dropna().unique())
+        selected_clusters = st.multiselect(
+            "Select clusters to highlight",
+            options=cluster_options,
+            default=cluster_options,
+        )
+        cluster_subset = filtered_cluster_df[
+            filtered_cluster_df["cluster_id"].isin(selected_clusters)
+        ].copy()
+        if cluster_subset.empty:
+            st.info("No data available for the selected clusters.")
+        else:
+            cluster_subset["cluster_label"] = cluster_subset["cluster_id"].astype(str)
+            cluster_subset["review_snippet"] = cluster_subset["review_body"].str.slice(0, 160)
+
+            scatter_fig = px.scatter(
+                cluster_subset,
+                x="tsne_x",
+                y="tsne_y",
+                color="cluster_label",
+                hover_name="product_title",
+                hover_data={
+                    "cluster_label": True,
+                    "star_rating": True,
+                    "review_snippet": True,
+                    "tsne_x": False,
+                    "tsne_y": False,
+                },
+                labels={"cluster_label": "Cluster"},
+            )
+            scatter_fig.update_layout(margin=dict(l=20, r=20, t=40, b=40))
+            st.plotly_chart(scatter_fig, width="stretch")
+
+            st.markdown("### Cluster drill-down")
+            cluster_sample_size = st.slider(
+                "Sample reviews per cluster",
+                min_value=3,
+                max_value=25,
+                value=10,
+                step=1,
+                key="cluster_sample_size",
+            )
+            for cluster_id in selected_clusters:
+                cluster_block = cluster_subset[cluster_subset["cluster_id"] == cluster_id]
+                if cluster_block.empty:
+                    continue
+                with st.expander(f"Cluster {cluster_id} ({len(cluster_block):,} reviews)", expanded=False):
+                    render_dynamic_terms("Pain Points", cluster_block, pain_col, top_n)
+                    render_dynamic_terms("Positive Aspects", cluster_block, pos_col, top_n)
+                    render_dynamic_terms("Themes", cluster_block, theme_col, top_n)
+
+                    sample_reviews = cluster_block.sample(
+                        min(len(cluster_block), cluster_sample_size),
+                        random_state=42,
+                    )
+                    for _, row in sample_reviews.iterrows():
+                        with st.expander(f"{row.get('product_title', 'Review')} • {row.get('star_rating', 'N/A')}⭐", expanded=False):
+                            st.write(f"**Pain Points:** {', '.join(row.get(pain_col, []))}")
+                            st.write(f"**Positive Aspects:** {', '.join(row.get(pos_col, []))}")
+                            st.write(f"**Themes:** {', '.join(row.get(theme_col, []))}")
+                            st.write("---")
+                            st.write(row.get("review_body", "No review text available."))
+
+    story_image(
+        "review_clusters_full_tsne.png",
+        "Notebook t-SNE map",
+        "Use as a visual reference when highlighting clusters in the scatter plot.",
+    )
+
+with temporal_tab:
+    section_header("Temporal Trends", "Monitor how sentiment and friction evolve over time.")
+    if filtered_reviews_df.empty or "review_date" not in filtered_reviews_df.columns:
+        st.info("Load the TSV dataset (with review dates) to explore temporal trends.")
     else:
         time_granularity = st.radio(
             "Group timeline by",
             ["Monthly", "Quarterly", "Yearly"],
             horizontal=True,
-            key="overview_time_granularity",
+            key="temporal_time_granularity",
         )
         freq_map = {"Monthly": "ME", "Quarterly": "QE", "Yearly": "YE"}
         freq = freq_map[time_granularity]
@@ -489,155 +755,71 @@ with overview_tab:
             rating_fig.update_layout(margin=dict(l=20, r=20, t=40, b=30))
             st.plotly_chart(rating_fig, width="stretch")
 
-    story_image(
-        "rating_distribution_for_furniture_reviews.png",
-        "Rating distribution across the full furniture corpus",
-        "Pairs nicely with the filtered charts above—look for shifts in the distribution when you tighten the filters to detect polarisation.",
-    )
-    story_image(
-        "sentiment_trend_avg.png",
-        "Average sentiment trend (all reviews)",
-        "Use this as the control chart; deviations in the filtered cohort indicate emerging signals.",
-    )
-
-with friction_tab:
-    section_header("Reduce Friction", "Pinpoint issues blocking purchase.")
-    st.markdown(
-        "The live chart reflects the current filters so you can contrast friction points by cohort. "
-        "Leverage the static charts underneath to compare against the entire dataset."
-    )
-    if filtered_clean_df.empty:
-        st.info("Adjust the filters or ensure the cleaned insights file is available to see dynamic pain points.")
-    else:
-        render_dynamic_terms("Pain Points", filtered_clean_df, pain_col, top_n)
-
-    story_image(
-        "pain_points.png",
-        "Top-20 pain points (full dataset)",
-        "Cross-check this static view with the live chart to see where the cohort over-indexes.",
-    )
+    st.markdown("### Notebook trend exports")
     story_image(
         "pain_point_trends.png",
         "Pain point mentions over time",
-        "If a filtered segment shows steeper growth than this baseline trend, it deserves immediate attention.",
-    )
-
-with delight_tab:
-    section_header("Delight Customers", "Surface the strengths worth amplifying.")
-    st.markdown(
-        "See what consistently delights customers in the active filter set, then compare with the broader market to identify differentiators."
-    )
-    if filtered_clean_df.empty:
-        st.info("Adjust the filters to surface positive drivers.")
-    else:
-        render_dynamic_terms("Positive Aspects", filtered_clean_df, pos_col, top_n)
-
-    story_image(
-        "positive_aspects.png",
-        "Top positive drivers (full dataset)",
-        "Look for overlap or gaps between the filtered slice and the overall population.",
+        "Spot emerging issues that may require intervention.",
     )
     story_image(
         "positive_aspect_trends.png",
-        "Positive aspects trend lines",
-        "When a cohort’s live chart diverges upward, it marks a messaging opportunity.",
-    )
-    story_image(
-        "top20_overview.png",
-        "Positive vs negative share across the first 20 features",
-        "Helpful for spotting balanced value propositions that resonate across the journey.",
-    )
-
-with segments_tab:
-    section_header("Segments & Stories", "Translate clusters into personas and playbooks.")
-    st.markdown(
-        "Explore how pains, delights, and purchase drivers cluster together. Sample real reviews for qualitative colour, "
-        "and use the t-SNE map to describe each audience."
-    )
-    if filtered_clean_df.empty:
-        st.info("No segments available for the current filter combination.")
-    else:
-        cols = st.columns(2)
-        with cols[0]:
-            render_dynamic_terms("Emerging Themes", filtered_clean_df, theme_col, top_n)
-        with cols[1]:
-            render_dynamic_terms("Decision Drivers", filtered_clean_df, purchase_col, top_n)
-
-        available_pain_points = sorted(
-            {
-                item
-                for points in filtered_clean_df.get(pain_col, [])
-                for item in (points if isinstance(points, list) else [])
-            }
-        )
-        selected_pain = st.selectbox(
-            "Filter sampled reviews by pain point",
-            options=["(Show all)"] + available_pain_points,
-        )
-
-        filtered_df = filtered_clean_df.copy()
-        if selected_pain != "(Show all)":
-            filtered_df = filtered_df[
-                filtered_df[pain_col].apply(lambda values: selected_pain in values if isinstance(values, list) else False)
-            ]
-
-        sample_size = st.slider(
-            "Sample reviews",
-            min_value=5,
-            max_value=50,
-            value=15,
-            step=5,
-            key="segments_sample_size",
-        )
-        sample_df = filtered_df.sample(min(len(filtered_df), sample_size)) if not filtered_df.empty else pd.DataFrame()
-
-        if sample_df.empty:
-            st.info("No reviews match the current filter combination.")
-        else:
-            for _, row in sample_df.iterrows():
-                with st.expander(row.get("product_title", "Review")):
-                    st.write(f"**Rating:** {row.get('star_rating', 'N/A')} ⭐")
-                    st.write(f"**Pain Points:** {', '.join(row.get(pain_col, []))}")
-                    st.write(f"**Positive Aspects:** {', '.join(row.get(pos_col, []))}")
-                    st.write(f"**Themes:** {', '.join(row.get(theme_col, []))}")
-                    st.write(f"**Decision Drivers:** {', '.join(row.get(purchase_col, []))}")
-                    st.write("---")
-                    st.write(row.get("review_body", "No review text available."))
-
-    story_image(
-        "review_clusters_full_tsne.png",
-        "t-SNE projection of 87k furniture reviews",
-        """
-        - **Assembly friction** – dense clusters packed with “difficult assembly”, “missing parts”, and “poor instructions” highlight the number-one detractor.
-        - **Quality control** – neighbouring groupings containing “color inaccurate” and “arrived damaged” signal production / QC follow-ups.
-        - **Value seekers vs premium stylists** – separated pockets of “great price / low price” versus “beautiful design / looks expensive” show differentiated positioning levers.
-        - **Comfort & function wins** – islands rich in “very comfortable”, “good storage”, and “solid wood” point to strengths worth amplifying in messaging.
-        - **Operations halo** – smaller blobs anchored by “fast shipping”, “well packaged”, and “return handling nice” showcase logistics excellence.
-
-        Use these narratives to frame roadmap conversations: lead with assembly risk, contrast it with the delight zones, then close with operational quick wins.
-        """,
-    )
-
-with ops_tab:
-    section_header("Operations & Follow-up", "Monitor service levers and supporting visuals.")
-    st.markdown(
-        "Track operational signals—shipping speed, packaging quality, and sentiment balance—to coordinate with fulfilment teams."
-    )
-    story_image(
-        "review_volume_over_time.png",
-        "Review volume over time (all reviews)",
-        "Pair this with the live overview chart to understand whether the cohort’s conversation share is expanding.",
+        "Positive aspects over time",
+        "Identify strengths that are gaining traction.",
     )
     story_image(
         "sentiment_trend_multiline.png",
         "Sentiment trend by rating band",
-        "Look for diverging lines when you focus on specific star ratings in the filters.",
+        "Check whether low-star experiences are diverging from the baseline.",
     )
-    story_image(
-        "purchase_decision_factors.png",
-        "Purchase decision factors",
-        "Great companion to the live decision-driver chart—use it to prioritise cross-functional actions.",
-    )
+
+with comparison_tab:
+    section_header("Comparative Analysis", "Stack top- and bottom-rated experiences side by side.")
+    if comparison_markdown:
+        with st.expander("Notebook comparative analysis", expanded=False):
+            st.markdown(comparison_markdown)
+
+    if filtered_clean_df.empty or "star_rating" not in filtered_clean_df.columns:
+        st.info("Enable the cleaned insight records to compare cohorts.")
+    else:
+        cohort_df = filtered_clean_df.dropna(subset=["star_rating"]).copy()
+        cohort_df["rating_bucket"] = cohort_df["star_rating"].apply(
+            lambda value: "Top performers (⭐ 4-5)"
+            if value >= 4
+            else "Bottom performers (⭐ 1-2)"
+            if value <= 2
+            else "Middle tier"
+        )
+
+        top_reviews = cohort_df[cohort_df["rating_bucket"] == "Top performers (⭐ 4-5)"]
+        bottom_reviews = cohort_df[cohort_df["rating_bucket"] == "Bottom performers (⭐ 1-2)"]
+
+        if top_reviews.empty or bottom_reviews.empty:
+            st.info(
+                "Need both high-rating (4-5) and low-rating (1-2) reviews in view to run the comparison. "
+                "Adjust rating filters or widen the date range."
+            )
+        else:
+            st.markdown("### Positive Differentiators")
+            pos_cols = st.columns(2)
+            with pos_cols[0]:
+                render_dynamic_terms("Top performer positives", top_reviews, pos_col, top_n)
+            with pos_cols[1]:
+                render_dynamic_terms("Bottom performer positives", bottom_reviews, pos_col, top_n)
+
+            st.markdown("### Pain Point Contrast")
+            pain_cols = st.columns(2)
+            with pain_cols[0]:
+                render_dynamic_terms("Top performer pain points", top_reviews, pain_col, top_n)
+            with pain_cols[1]:
+                render_dynamic_terms("Bottom performer pain points", bottom_reviews, pain_col, top_n)
+
+            st.markdown("### Key Takeaways")
+            st.markdown(
+                "- **Double down on what works**: Highlight the differentiators that appear in the left column "
+                "but are absent on the right.\n"
+                "- **Remediate friction**: Pain points spiking in the bottom-right chart are prime candidates for product or CX fixes.\n"
+                "- **Measure progress over time**: Re-run this comparison after interventions to see shifts in the distributions."
+            )
 
 # Footer ---------------------------------------------------------------------
 st.markdown("---")

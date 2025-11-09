@@ -91,9 +91,10 @@ Open `http://localhost:8501`, adjust the sidebar filters (ratings, verified purc
 
 `streamlit_dashboard.py` turns the analysis into a guided experience for stakeholders:
 
-- **Executive Overview** – Time-series trends and rating distributions respond instantly to filter selections.
+- **Executive Overview** – Surface the most recent executive summary alongside filters that update time-series trends and rating distributions instantly.
 - **Reduce Friction / Delight Customers** – Live bar charts expose the top pain points and positives for any cohort, paired with full-market PNG references.
 - **Segments & Stories** – Dig into cluster personas using t-SNE projections, top themes/decision drivers, and expandable sample reviews.
+- **Compare Segments** – Side-by-side visuals contrast what top (⭐ 4–5) versus bottom (⭐ 1–2) reviewers praise or criticize, complete with key takeaways.
 - **Operations & Follow-up** – Track shipping/packaging sentiment and decision-factor signals that inform cross-functional actions.
 
 Run locally with the command above and navigate the tabs to extract narratives, copy quotes, and capture action items for executive briefings.
