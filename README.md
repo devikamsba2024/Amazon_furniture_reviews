@@ -1,155 +1,130 @@
 # Customer Sentiment Analysis for Market Expansion
 
+An end-to-end analytics workflow that distills 87K Amazon furniture reviews into actionable insights for product, marketing, and operations teams. The project combines LLM-driven extraction, semantic clustering, and an interactive Streamlit storytelling dashboard to highlight what delights customers and where friction persists.
+
+---
+
+## Table of Contents
+
+1. [Quick Start](#quick-start)
+2. [Project Overview](#project-overview)
+3. [Architecture & Techniques](#architecture--techniques)
+4. [Key Findings](#key-findings)
+5. [Challenges & Lessons Learned](#challenges--lessons-learned)
+6. [Streamlit Storytelling Dashboard](#streamlit-storytelling-dashboard)
+7. [Repository Layout](#repository-layout)
+8. [Future Improvements](#future-improvements)
+
+---
+
+## Quick Start
+
+### 1. Clone & set up
+
+```bash
+git clone https://github.com/devikamsba2024/Amazon_furniture_reviews.git
+cd Amazon_furniture_reviews
+python -m pip install --user streamlit pandas plotly numpy
+```
+
+### 2. Launch the interactive dashboard
+
+```bash
+python -m streamlit run streamlit_dashboard.py
+```
+
+Open `http://localhost:8501`, adjust the sidebar filters (ratings, verified purchase, Vine participation, date range, keywords) and walk through the tabs to explore the story.
+
+### 3. Explore the notebook
+
+- `Student_Project_Starter.ipynb` orchestrates the extraction pipeline, clustering, and chart generation.
+- Large artifacts (`amazon_reviews_us_Furniture_v1_00_filtered.tsv`, gzipped JSON checkpoints) are already included; no external downloads required.
+
+---
+
 ## Project Overview
 
-This project analyzes Amazon furniture reviews to extract customer insights, including pain points, positive aspects, temporal trends, and product quality patterns. The analysis uses Large Language Models (LLMs) for structured extraction and semantic embeddings for clustering similar insights.
+- **Objective**: Identify the biggest purchase blockers, the differentiating delights, and segment-specific narratives that guide market expansion decisions.
+- **Scope**: 87,260 furniture reviews (2008–2015), processed into structured pain points, positive aspects, themes, and purchase decision factors.
+- **Outcome**: Executive-ready summaries, clustered personas, and an interactive dashboard to support follow-up action plans.
 
 ---
 
-## Techniques Used
+## Architecture & Techniques
 
-- **Async LLM Extraction Pipeline**: Leveraged `asyncio` and `aiohttp` to fan out up to 20 concurrent OpenRouter calls with periodic checkpointing for resilience.
-- **Structured Prompt Engineering**: Crafted JSON-constrained prompts to standardize pain points, positives, themes, and decision factors into 2–3 word spans.
-- **Semantic Canonicalization**: Applied SentenceTransformer embeddings with two-pass clustering to merge duplicate phrases and create canonical forms.
-- **Frequency & Cohort Analysis**: Used `Counter` aggregations and rating-based cohorts (low/mid/high star) to highlight differentiated drivers.
-- **Visualization Suite**: Produced matplotlib/Seaborn charts for distributions, temporal trends, and top-term bar charts.
-- **Embedding & Clustering Workflow**: Generated BGE-M3 embeddings, reduced dimensions via PCA + t-SNE, and grouped reviews with K-Means (k=10).
-- **Temporal Insight Tracking**: Exploded yearly pain points and sentiments to monitor evolution of customer concerns and positivity.
-- **Comparative Summaries**: Stratified samples from best/worst products and prompted an LLM for differentiators and action-oriented recommendations.
-- **Executive Reporting**: Automated executive-summary generation (JSON + Markdown) summarizing opportunity, key findings, and next steps.
+- **Async LLM Extraction Pipeline** – `asyncio`/`aiohttp` fan out up to 20 OpenRouter calls with checkpointing for resiliency.
+- **Structured Prompt Engineering** – JSON-constrained prompts enforce tight, 2–3 word canonical phrases.
+- **Semantic Canonicalization** – SentenceTransformer embeddings plus two-pass clustering merge duplicate phrases into single concepts.
+- **Frequency & Cohort Analysis** – Star-rating cohorts, Counter aggregations, and cohort comparisons highlight differentiated drivers.
+- **Embedding & Clustering Workflow** – BGE-M3 embeddings, PCA + t-SNE projection, and K-Means (k=10) reveal persona clusters.
+- **Visualization Suite** – Matplotlib/Seaborn plots and exported PNGs for distributions, temporal trends, and top terms.
+- **Executive Reporting** – Automated JSON/Markdown summaries capture opportunity, key findings, and recommended actions.
 
 ---
 
-## Special Considerations & Challenges
+## Key Findings
 
-### 1. API Call Errors with Concurrent Requests
-
-**Issue Encountered:**
-During the parallel processing of 87,260 reviews, several API errors occurred:
-- `Server disconnected` errors
-- `[Errno 54] Connection reset by peer`
-- `502: Internal server error` (502 Bad Gateway)
-
-**Root Cause:**
-The concurrent request limit was set to **20 simultaneous requests** (`CONCURRENT_REQUESTS = 20`). While this improves processing speed, it may have exceeded the API provider's rate limits or overwhelmed their servers, especially during peak processing periods.
-
-**Impact:**
-- Some batches failed during processing, resulting in incomplete extractions for certain reviews
-- Processing time was extended due to retry delays and connection resets
-- Overall success rate: ~99.97% (87,233 successful extractions out of 87,260 reviews)
-
-**Lessons Learned:**
-- **Conservative concurrency**: Start with lower concurrent requests (10-15) and gradually increase if API stability allows
-- **Retry logic**: Implement exponential backoff for failed requests to handle transient errors
-- **Error handling**: The async processing framework gracefully handled failures by returning `None` for failed extractions, allowing processing to continue
-- **Checkpointing**: Periodic checkpoint saves (every 1000 batches) ensured progress was preserved even when errors occurred
-
-**Recommendation for Future Runs:**
-Consider reducing `CONCURRENT_REQUESTS` to 10-15 for more stable processing, or implement a dynamic rate limiter that adjusts based on error rates.
+- **Universal friction** – “Difficult assembly” dominates across every star-rating band.
+- **Quality control watch-outs** – Color inaccuracy, damaged arrivals, and wobbly builds permeate 4–5 star reviews.
+- **Stable sentiment baseline** – Average sentiment and rating trends stayed steady from 2008–2015, providing a control for new signals.
+- **Distinct personas** – Clustering surfaces buyer archetypes: assembly-sensitive DIYers, value hunters, style-driven decorators, and comfort seekers.
 
 ---
 
-### 2. Canonicalization of Similar Pain Points and Positive Aspects
+## Challenges & Lessons Learned
 
-**Problem Identified:**
-After extracting insights from reviews, many pain points and positive aspects had similar wording or meaning but were counted separately, leading to fragmented insights:
+### API reliability under concurrency
 
-- **Examples of duplicates:**
-  - "easy assembly" vs "easy assemble"
-  - "looks great" vs "looks nice" vs "looks good"
-  - "very sturdy" vs "sturdy"
-  - "great price" vs "good price"
-  - "difficult assembly" vs "assembly difficulty" vs "assembly time"
+- **Symptoms**: `Server disconnected`, `Connection reset by peer`, `502` errors at 20 concurrent requests.
+- **Mitigation**: Periodic checkpointing, retry logic, graceful handling of failed batches.
+- **Recommendation**: Drop to 10–15 concurrent calls or introduce adaptive rate limiting.
 
-**Solution Implemented:**
-A **canonicalization function** was developed to semantically group similar phrases and map them to a single representative (canonical) form.
+### Canonicalizing near-duplicate phrases
 
-**How the Canonicalization Process Works:**
+- **Problem**: Raw LLM output contained variants (e.g., “easy assembly” vs “easy assemble”) that fragmented metrics.
+- **Solution**: Two-pass embedding clustering—tight similarity (≥0.75) followed by broader merges (≥0.60)—with canonical representatives per cluster.
+- **Result**: Consolidated metrics, clearer narratives, and consistent terminology across pain points, positives, themes, and decision factors.
 
-1. **Semantic Embedding**: 
-   - Uses SentenceTransformer model (`all-MiniLM-L6-v2`) to convert phrases into dense vector embeddings
-   - Captures semantic meaning rather than exact text matching
-   - Processes the top 300 most frequent phrases to limit computational cost
+---
 
-2. **Two-Pass Clustering**:
-   - **First Pass (Tight Threshold: 0.75)**: Groups very similar phrases
-     - Example: "comfortable" ↔ "comfort", "easy assembly" ↔ "easy assemble"
-     - Uses cosine similarity ≥ 0.75 to identify near-identical meanings
-   
-   - **Second Pass (Looser Threshold: 0.60)**: Merges related first-pass clusters
-     - Example: "durable" ↔ "sturdy", "great price" ↔ "good price" ↔ "low price"
-     - Uses cosine similarity ≥ 0.60 to capture broader semantic relationships
+## Streamlit Storytelling Dashboard
 
-3. **Representative Selection**:
-   - The first unassigned phrase in each cluster becomes the canonical representative
-   - All similar phrases map to this representative
-   - Ensures consistent terminology across the dataset
+`streamlit_dashboard.py` turns the analysis into a guided experience for stakeholders:
 
-4. **Application**:
-   - Applied to four dimensions: `pain_points`, `positive_aspects`, `main_themes`, and `purchase_decision_factors`
-   - Creates new columns with `_clean` suffix (e.g., `pain_points_clean`)
-   - Original columns preserved for traceability
+- **Executive Overview** – Time-series trends and rating distributions respond instantly to filter selections.
+- **Reduce Friction / Delight Customers** – Live bar charts expose the top pain points and positives for any cohort, paired with full-market PNG references.
+- **Segments & Stories** – Dig into cluster personas using t-SNE projections, top themes/decision drivers, and expandable sample reviews.
+- **Operations & Follow-up** – Track shipping/packaging sentiment and decision-factor signals that inform cross-functional actions.
 
-**Benefits:**
-- **Consolidated insights**: Similar phrases are grouped, providing clearer, more actionable insights
-- **Better aggregation**: Frequency counts are more accurate when duplicates are merged
-- **Preserved semantics**: Uses embedding-based similarity, so "fast shipping" and "quick delivery" are recognized as similar even with different wording
-- **Maintains precision**: Two-pass approach balances precision (first pass) with broader grouping (second pass)
+Run locally with the command above and navigate the tabs to extract narratives, copy quotes, and capture action items for executive briefings.
 
-**Example Transformation:**
+---
+
+## Repository Layout
+
 ```
-Before Canonicalization:
-- "easy assembly": 7,796 mentions
-- "easy assemble": 5,564 mentions
-- Total: 13,360 mentions across 2 separate categories
-
-After Canonicalization:
-- "easy assembly": 13,360 mentions (canonical form)
-- "easy assemble" → mapped to "easy assembly"
+Amazon_furniture_reviews/
+├── streamlit_dashboard.py                # Interactive storytelling dashboard
+├── Student_Project_Starter.ipynb         # Primary notebook for extraction + clustering
+├── amazon_reviews_us_Furniture_v1_00_filtered.tsv
+├── review_insights_checkpoint.json
+├── review_insights_checkpoint_cleaned.json.gz
+├── furniture_insight_charts/             # Exported PNG visuals
+├── executive_summary_*.json / *.md       # Generated business summaries
+├── pain_points_*.json                    # Aggregated frequency metrics
+├── positive_aspects_*.json
+├── main_themes_*.json
+├── purchase_factors_*.json
+└── top_vs_bottom_comparison.md
 ```
-
-**Result:**
-The canonicalization process significantly improved the quality of aggregated insights, reducing fragmentation and providing clearer patterns in customer feedback.
-
----
-
-## Key Technical Decisions
-
-1. **Model Selection**: Used `google/gemini-2.5-flash-lite-preview-09-2025` for LLM extraction (fast and cost-effective for large-scale processing)
-
-2. **Embedding Model**: `BAAI/bge-m3` for review embeddings and clustering analysis
-
-3. **Parallel Processing**: Asynchronous processing with `aiohttp` and `asyncio` to handle 87K+ reviews efficiently
-
-4. **Checkpoint Strategy**: Saved progress every 1000 batches to enable recovery from interruptions
-
-5. **Data Cleaning**: Canonicalization ensures consistent terminology across extracted insights
-
----
-
-## Interesting Findings
-
-- **Top Pain Point**: "difficult assembly" appears most frequently across all rating categories, indicating a universal customer concern
-- **Quality Control Issues**: Even high-rated (4-5 star) products have pain points, primarily related to minor assembly challenges and color accuracy
-- **Sentiment Trends**: Overall sentiment remained relatively stable over the analysis period (2008-2015)
-- **Clustering Insights**: K-Means clustering on review embeddings revealed 10 distinct customer segments with varying focus (quality, price, aesthetics, etc.)
-
----
-
-## File Structure
-
-- `Student_Project_Starter.ipynb`: Main analysis notebook
-- `review_insights_checkpoint_cleaned.json`: Processed insights with canonicalized phrases
-- `furniture_insight_charts/`: Generated visualizations (PNG files)
-- `executive_summary_*.json` & `executive_summary_*.md`: Business recommendations
-- `pain_points_*.json`, `positive_aspects_*.json`: Aggregated frequency data
 
 ---
 
 ## Future Improvements
 
-1. **Rate Limiting**: Implement adaptive rate limiting based on API error rates
-2. **Retry Logic**: Add exponential backoff for failed API calls
-3. **Real-time Monitoring**: Add progress dashboards to track API health during processing
+1. **Adaptive rate limiting** – Dynamically modulate concurrency based on API error rates.
+2. **Enhanced retry/backoff** – Expand resilience tactics for long-running extraction batches.
+3. **Real-time monitoring** – Add streaming progress dashboards during large-scale processing.
+4. **Interactive cluster explorer** – Extend the Streamlit app with a Plotly t-SNE scatter plot and persona annotator.
 
-
+---
