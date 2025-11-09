@@ -1,0 +1,29 @@
+{
+  "counts_descending": {
+    "product quality": 27884,
+    "assembly ease": 25501,
+    "aesthetics": 12487,
+    "comfort": 9908,
+    "value": 8561,
+    "shipping speed": 8389,
+    "storage capacity": 4955,
+    "customer service": 4123,
+    "size": 3884,
+    "durability": 3710,
+    "sturdiness": 3641,
+    "stability": 2940,
+    "color accuracy": 2205,
+    "appearance": 2174,
+    "shipping damage": 2162,
+    "rug appearance": 2134,
+    "functionality": 2021,
+    "product condition": 1889,
+    "ease of use": 1697,
+    "price point": 1590
+  },
+  "metadata": {
+    "total_reviews": 87233,
+    "generated_at": "2025-11-02 21:10:03",
+    "top_n": 20
+  }
+}

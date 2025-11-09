@@ -1,0 +1,29 @@
+{
+  "counts_descending": {
+    "none mentioned": 6526,
+    "difficult assembly": 4524,
+    "poor quality": 2163,
+    "color inaccurate": 2088,
+    "too small": 1247,
+    "poor instructions": 1205,
+    "arrived damaged": 1201,
+    "chemical smell": 1185,
+    "smaller than expected": 1113,
+    "high price": 1049,
+    "missing parts": 1003,
+    "cheaply made": 993,
+    "very heavy": 903,
+    "not sturdy": 900,
+    "misaligned holes": 637,
+    "slow shipping": 560,
+    "late delivery": 450,
+    "misleading description": 435,
+    "poor construction": 405,
+    "missing hardware": 383
+  },
+  "metadata": {
+    "total_reviews": 87233,
+    "generated_at": "2025-11-02 21:10:03",
+    "top_n": 20
+  }
+}

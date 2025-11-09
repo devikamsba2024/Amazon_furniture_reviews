@@ -1,0 +1,29 @@
+{
+  "counts_descending": {
+    "price point": 16965,
+    "aesthetics": 10053,
+    "appearance": 8924,
+    "product quality": 5891,
+    "ease assembly": 5820,
+    "size": 5070,
+    "comfort": 4833,
+    "storage needs": 3286,
+    "shipping speed": 2963,
+    "low price": 2732,
+    "functionality": 2402,
+    "sturdiness": 2199,
+    "value": 2058,
+    "color": 2026,
+    "gift giving": 1870,
+    "product features": 1336,
+    "material": 1316,
+    "space saving": 975,
+    "durability": 907,
+    "product description": 808
+  },
+  "metadata": {
+    "total_reviews": 87233,
+    "generated_at": "2025-11-02 21:10:03",
+    "top_n": 20
+  }
+}
